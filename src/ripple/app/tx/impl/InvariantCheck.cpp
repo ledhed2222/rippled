@@ -372,6 +372,7 @@ LedgerEntryTypesMatch::visitEntry(
             case ltNEGATIVE_UNL:
             case ltNFTOKEN_PAGE:
             case ltNFTOKEN_OFFER:
+            case ltCFTOKEN_ISSUANCE:
                 break;
             default:
                 invalidTypeAdded_ = true;
@@ -715,6 +716,85 @@ NFTokenCountTracking::finalize(
     }
 
     return true;
+}
+
+//------------------------------------------------------------------------------
+
+void
+ValidCFTIssuance::visitEntry(
+    bool isDelete,
+    std::shared_ptr<SLE const> const& _before,
+    std::shared_ptr<SLE const> const& after)
+{
+    if (after && after->getType() == ltCFTOKEN_ISSUANCE)
+    {
+        if (isDelete)
+            cftsDeleted_++;
+        else
+            cftsCreated_++;
+    }
+}
+
+bool
+ValidCFTIssuance::finalize(
+    STTx const& tx,
+    TER const result,
+    XRPAmount const _fee,
+    ReadView const& _view,
+    beast::Journal const& j)
+{
+    if (tx.getTxnType() == ttCFTOKEN_ISSUANCE_CREATE && result == tesSUCCESS)
+    {
+        if (cftsCreated_ == 0)
+        {
+            JLOG(j.fatal()) << "Invariant failed: CFT issuance creation "
+                               "succeeded without creating a CFT issuance";
+        }
+        else if (cftsDeleted_ != 0)
+        {
+            JLOG(j.fatal()) << "Invariant failed: CFT issuance creation "
+                               "succeeded while removing CFT issuances";
+        }
+        else if (cftsCreated_ > 1)
+        {
+            JLOG(j.fatal()) << "Invariant failed: CFT issuance creation "
+                               "succeeded but created multiple issuances";
+        }
+
+        return cftsCreated_ == 1 && cftsDeleted_ == 0;
+    }
+
+    if (tx.getTxnType() == ttCFTOKEN_ISSUANCE_DESTROY && result == tesSUCCESS)
+    {
+        if (cftsDeleted_ == 0)
+        {
+            JLOG(j.fatal()) << "Invariant failed: CFT issuance deletion "
+                               "succeeded without removing a CFT issuance";
+        }
+        else if (cftsCreated_ > 0)
+        {
+            JLOG(j.fatal()) << "Invariant failed: CFT issuance deletion "
+                               "succeeded while creating CFT issuances";
+        }
+        else if (cftsDeleted_ > 1)
+        {
+            JLOG(j.fatal()) << "Invariant failed: CFT issuance deletion "
+                               "succeeded but deleted multiple issuances";
+        }
+
+        return cftsCreated_ == 0 && cftsDeleted_ == 1;
+    }
+
+    if (cftsCreated_ != 0)
+    {
+        JLOG(j.fatal()) << "Invariant failed: a CFT issuance was created";
+    }
+    else if (cftsDeleted_ != 0)
+    {
+        JLOG(j.fatal()) << "Invariant failed: a CFT issuance was deleted";
+    }
+
+    return cftsCreated_ == 0 && cftsDeleted_ == 0;
 }
 
 }  // namespace ripple
